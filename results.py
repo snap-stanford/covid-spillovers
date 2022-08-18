@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import math
 import numpy as np
+import networkx as nx
 import os
 from omegaconf import OmegaConf
 import pickle
@@ -553,7 +554,120 @@ def compute_percent_reduction(dset, tier_self_weights, within_county_weights, ti
             denom += np.sum(within_county_weights[ci, group_idx] * (tier_self_weights[group_idx, 1] - tier_self_weights[group_idx, 0]))
         percent_reductions[ci] = num / denom
     return percent_reductions
+
+def compute_percent_reduction_macrocounty(dset, tier_self_weights, within_county_weights, tier_pair_weights, 
+                                          county_county_weights, county2macrocounty, group_idx=None):
+    assert tier_self_weights.shape == (dset.num_poi_groups(), 2)
+    assert (tier_self_weights > 0).all()  # should be exponentiated already 
+    assert within_county_weights.shape == (dset.num_counties(), dset.num_poi_groups())
+    assert (tier_pair_weights > 0).all()
+    assert tier_pair_weights.shape == (dset.num_poi_groups(), 2, 2)
+    assert county_county_weights.shape == (dset.num_counties(), dset.num_counties(), dset.num_poi_groups())
     
+    adj_dict = helper.load_county_adjacency_dict()
+    percent_reductions = np.zeros(dset.num_counties())
+    for ci, fips_i in enumerate(dset.indices['counties']):
+        same_macro_neighbors = []  # neighbors in same macrocounty
+        diff_macro_neighbors = []  # neighbors in different macrocounty
+        macrocounty_i = county2macrocounty[fips_i]
+        for fips_j in adj_dict[fips_i]:
+            if fips_j in dset.county2idx:  # we don't have counties outside of California
+                cj = dset.county2idx[fips_j]
+                if county2macrocounty[fips_j] == macrocounty_i:
+                    same_macro_neighbors.append(cj)
+                else:
+                    diff_macro_neighbors.append(cj)
+        neighbors = same_macro_neighbors + diff_macro_neighbors
+        if group_idx is None:  # sum over groups
+            same_macro_outflow = county_county_weights[ci, same_macro_neighbors, :]  # num_neighbors x num_groups
+            diff_macro_outflow = county_county_weights[ci, diff_macro_neighbors, :]
+            num = np.sum(same_macro_outflow * (tier_pair_weights[:, 1, 1] - tier_pair_weights[:, 0, 0]))
+            num += np.sum(diff_macro_outflow * (tier_pair_weights[:, 1, 1] - tier_pair_weights[:, 0, 1]))
+            num += np.sum(within_county_weights[ci, :] * (tier_self_weights[:, 1] - tier_self_weights[:, 0]))
+            outflow = county_county_weights[ci, neighbors, :]
+            denom = np.sum(outflow * (tier_pair_weights[:, 1, 1] - tier_pair_weights[:, 0, 0]))
+            denom += np.sum(within_county_weights[ci, :] * (tier_self_weights[:, 1] - tier_self_weights[:, 0]))
+        else:
+            same_macro_outflow = county_county_weights[ci, same_macro_neighbors, group_idx]  # num_neighbors
+            diff_macro_outflow = county_county_weights[ci, diff_macro_neighbors, group_idx]
+            num = np.sum(same_macro_outflow * (tier_pair_weights[group_idx, 1, 1] - tier_pair_weights[group_idx, 0, 0]))
+            num += np.sum(diff_macro_outflow * (tier_pair_weights[group_idx, 1, 1] - tier_pair_weights[group_idx, 0, 1]))
+            num += np.sum(within_county_weights[ci, group_idx] * (tier_self_weights[group_idx, 1] - tier_self_weights[group_idx, 0]))
+            outflow = county_county_weights[ci, neighbors, group_idx]
+            denom = np.sum(outflow * (tier_pair_weights[group_idx, 1, 1] - tier_pair_weights[group_idx, 0, 0]))
+            denom += np.sum(within_county_weights[ci, group_idx] * (tier_self_weights[group_idx, 1] - tier_self_weights[group_idx, 0]))
+        percent_reductions[ci] = num / denom
+    return percent_reductions
+    
+def compute_kcut_cost(dset, tier_self_weights, within_county_weights, tier_pair_weights, 
+                      county_county_weights, county2macrocounty):
+    """
+    Compute minimum k-cut objective. Use this to confirm that maximizing percent reduction and minimizing
+    k-cut objective are the same.
+    """
+    assert tier_self_weights.shape == (dset.num_poi_groups(), 2)
+    assert (tier_self_weights > 0).all()  # should be exponentiated already 
+    assert within_county_weights.shape == (dset.num_counties(), dset.num_poi_groups())
+    assert (tier_pair_weights > 0).all()
+    assert tier_pair_weights.shape == (dset.num_poi_groups(), 2, 2)
+    assert county_county_weights.shape == (dset.num_counties(), dset.num_counties(), dset.num_poi_groups())
+    
+    adj_dict = helper.load_county_adjacency_dict()
+    total_cost = 0
+    for ci, fips_i in enumerate(dset.indices['counties']):
+        neighbors = []  # all neighbors
+        diff_macro_neighbors = []  # neighbors in different macrocounty
+        macrocounty_i = county2macrocounty[fips_i]
+        for fips_j in adj_dict[fips_i]:
+            if fips_j in dset.county2idx:  # we don't have counties outside of California
+                cj = dset.county2idx[fips_j]
+                neighbors.append(cj)
+                if county2macrocounty[fips_j] != macrocounty_i:
+                    diff_macro_neighbors.append(cj)
+        diff_macro_outflow = county_county_weights[ci, diff_macro_neighbors, :]
+        num = np.sum(diff_macro_outflow * (tier_pair_weights[:, 0, 1] - tier_pair_weights[:, 0, 0]))
+        outflow = county_county_weights[ci, neighbors, :]
+        denom = np.sum(outflow * (tier_pair_weights[:, 1, 1] - tier_pair_weights[:, 0, 0]))
+        denom += np.sum(within_county_weights[ci, :] * (tier_self_weights[:, 1] - tier_self_weights[:, 0]))
+        total_cost += (num / denom)
+    return total_cost
+
+def make_networkx_graph_for_metis(dset, tier_self_weights, within_county_weights, tier_pair_weights, 
+                                  county_county_weights):
+    """
+    Make undirected county-county graph.
+    """
+    assert tier_self_weights.shape == (dset.num_poi_groups(), 2)
+    assert (tier_self_weights > 0).all()  # should be exponentiated already 
+    assert within_county_weights.shape == (dset.num_counties(), dset.num_poi_groups())
+    assert (tier_pair_weights > 0).all()
+    assert tier_pair_weights.shape == (dset.num_poi_groups(), 2, 2)
+    assert county_county_weights.shape == (dset.num_counties(), dset.num_counties(), dset.num_poi_groups())
+    
+    adj_dict = helper.load_county_adjacency_dict()
+    edge2weight = {}
+    county_county_mat = np.zeros((dset.num_counties(), dset.num_counties()))
+    for ci, fips_i in enumerate(dset.indices['counties']):
+        neighbors = [dset.county2idx[fips_j] for fips_j in adj_dict[fips_i] if fips_j in dset.county2idx]
+        outflow = county_county_weights[ci, neighbors, :]  # num_neighbors x num_groups
+        nums = np.sum(outflow * (tier_pair_weights[:, 0, 1] - tier_pair_weights[:, 0, 0]), axis=1)  # num_neighbors
+        denom = np.sum(outflow * (tier_pair_weights[:, 1, 1] - tier_pair_weights[:, 0, 0]))
+        denom += np.sum(within_county_weights[ci, :] * (tier_self_weights[:, 1] - tier_self_weights[:, 0]))
+        directed_weights = nums / denom
+        for cj, w in zip(neighbors, directed_weights):
+            edge = tuple(sorted((ci, cj)))  # standardize ordering
+            if edge in edge2weight:
+                edge2weight[edge] = edge2weight[edge] + w
+            else:
+                edge2weight[edge] = w
+    
+    G = nx.Graph()
+    for (ci, cj), w in edge2weight.items():
+        G.add_edge(ci, cj, capacity=w)
+        G.adj[ci][cj]['weight'] = int(10000 * w)  # weight needs to be integer for metis part_graph
+    G.graph['edge_weight_attr'] = 'weight'
+    return G 
+
     
 def get_parser():
     parser = argparse.ArgumentParser()

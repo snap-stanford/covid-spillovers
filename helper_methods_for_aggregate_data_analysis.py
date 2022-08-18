@@ -71,6 +71,19 @@ def load_county_adjacency_dict():
             if neighbor_node != curr_node:
                 adj_dict[curr_node].append(neighbor_node)
     return adj_dict
+
+def load_county_name_to_fips():
+    name2fips = {}
+    path_fn = os.path.join(PATH_TO_CBG_POI_DATA, 'county_adjacency.txt')
+    with open(path_fn, encoding="utf8", errors='ignore') as tsv:
+        for line in csv.reader(tsv, delimiter="\t"):
+            name = line[-2].strip('\"')
+            fips = int(line[-1])
+            if name in name2fips:
+                assert name2fips[name] == fips
+            else:
+                name2fips[name] = fips
+    return name2fips
             
 def compute_spearman_correlation(poi_visits, popular_times, verbose=False):
     """

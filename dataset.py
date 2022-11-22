@@ -25,10 +25,11 @@ class CBGPOIDataset(Dataset):
                  scale_attributes=True, correction_terms=None, load_distances_dynamically=True):
         """
         Args:
-            data (tuple): used when we want to provide toy data to test, must be the 7 necessary data elements
+            data (tuple): used when we want to provide toy data to test
             directory (string): path to directory with data (see load_data)
             start_date (string): start date of data to include
             end_date (string): end date of data to include
+            path_to_county_data (string): path to county-level data
             cbg_count_min (int): min number of nonzero visits the CBG must have to be included
             poi_count_min (int): min number of nonzero visits the POI must have to be included
             acs_coverage_min (proportion): min proportion of CBGs that this ACS field must be non-nan for 
@@ -37,11 +38,11 @@ class CBGPOIDataset(Dataset):
                                          race), instead of all ACS fields
             poi_cat_count_min (int): min number of kept POIs that the POI sub/topcategory must have to be included 
                                     in POI attributes
-            load_dynamic (bool): whether to load dynamic attributes for CBGs and POIs
-            scale_attributes (bool): whether to apply min-max pooling to non-one-hot features (which are 
+            scale_attributes (bool): whether to apply min-max scaling to non-one-hot features (which are 
                                      tier and POI category)
             correction_terms (dict/tuple): correction terms for data points, see set_correction_terms()
                                            for details; defaults to (1,1) when correction_terms is None
+            load_distances_dynamically (bool): whether to load CBG-POI distances dynamically
         """
         self.use_key_demographics = use_key_demographics
         self.scale_attributes = scale_attributes
@@ -73,7 +74,7 @@ class CBGPOIDataset(Dataset):
         # Map POI subcategories to indices, will use later for one-hot encoding
         self.subcat2idx = {}
         self.num_subcat_classes = 1  # we will at least have Other
-        self.poi_subcat_indices = np.zeros(self.num_pois(), dtype=int)  # the subcat index for each POI
+        self.poi_subcat_indices = np.zeros(self.num_pois(), dtype=int)  # subcat index for each POI
         for subcat, poi_indices in self.poi_attrs.groupby('sub_category').indices.items():
             if (len(poi_indices) < poi_cat_count_min) or (subcat == ''):
                 subcat_idx = 0
@@ -86,8 +87,9 @@ class CBGPOIDataset(Dataset):
         # Map common POI topcategories to indices, will use for heterogeneous treatment effects 
         self.subcat2group = {}
         self.poi_group_labels = ['Other']
-        self.poi_group_indices = np.zeros(self.num_pois(), dtype=int)  # the group index for each POI
+        self.poi_group_indices = np.zeros(self.num_pois(), dtype=int)  # group index for each POI
         for topcat, poi_indices in self.poi_attrs.groupby('top_category').indices.items():
+            # keep top categories with 1000+ POIs as groups
             if (len(poi_indices) < 1000) or (topcat in {'', 'Restaurants and Other Eating Places'}):
                 group_idx = 0
             else:
@@ -101,7 +103,7 @@ class CBGPOIDataset(Dataset):
         # Allow these subcategories to be their own group
         for subcat in ['Full-Service Restaurants', 'Snack and Nonalcoholic Beverage Bars', 
                        'Limited-Service Restaurants', 'Fitness and Recreational Sports Centers']:
-            group_idx = self.num_poi_groups()
+            group_idx = len(self.poi_group_labels)
             self.poi_group_labels.append(subcat)
             self.subcat2group[subcat] = group_idx
             poi_indices = self.poi_indices[self.poi_attrs.sub_category == subcat]
@@ -109,7 +111,7 @@ class CBGPOIDataset(Dataset):
             self.poi_group_indices[poi_indices] = group_idx
         print('Modeling %d subcategories and %d POI groups' % (self.num_subcat_classes, self.num_poi_groups()))
         
-        # global variables that describe structure of data in batches/single sample
+        # Global variables that describe structure of data that is returned by __getitem__
         self.BATCH_KEYS = ['indices', 'num_visits', 'cbg_attrs', 'poi_attrs', 'edge_attrs']
         cbg_d = self.cbg_attrs.values.shape[1]
         poi_d = self.num_subcat_classes + self.poi_attrs.values.shape[1] - 2  # first 2 cols of poi_attrs are sub/top category
@@ -120,29 +122,30 @@ class CBGPOIDataset(Dataset):
             'num_counties':self.num_counties(),
             'num_poi_groups':self.num_poi_groups(),
             
-            'cbg_num_attrs':cbg_d+4,
-            'cbg_static_attrs':(0, cbg_d),
-            'cbg_device_ct':cbg_d,
-            'cbg_tier':cbg_d+1,
-            'cbg_assignment_var':cbg_d+2,
-            'cbg_small_county':cbg_d+3,
+            'cbg_num_attrs':cbg_d+4,  # total number of CBG attributes
+            'cbg_static_attrs':(0, cbg_d),  # positions of static CBG attributes
+            'cbg_device_ct':cbg_d,  # position of CBG device count
+            'cbg_tier':cbg_d+1,  # position of CBG tier
+            'cbg_assignment_var':cbg_d+2,  # position of CBG Z variable
+            'cbg_small_county':cbg_d+3,  # position of whether CBG is in small county
             
-            'poi_num_attrs':poi_d+4,
-            'poi_static_attrs':(0, poi_d),
-            'poi_group':poi_d,
-            'poi_tier':poi_d+1,
-            'poi_assignment_var':poi_d+2,
-            'poi_small_county':poi_d+3,
+            'poi_num_attrs':poi_d+4,  # total number of POI attributes
+            'poi_static_attrs':(0, poi_d),  # positions of static POI attributes
+            'poi_group':poi_d,  # position of POI group
+            'poi_tier':poi_d+1,  # position of POI tier
+            'poi_assignment_var':poi_d+2,  # position of POI Z variable
+            'poi_small_county':poi_d+3,  # position of whether POI is in small county
             
-            'edge_num_attrs':3,
-            'cbg_poi_dist':0,
-            'same_county':1,
-            'blueprint_stage':2
+            'edge_num_attrs':3,  # total number of edge attributes
+            'cbg_poi_dist':0,  # position of CBG-POI distance
+            'same_county':1,  # position of whether CBG and POI are in same county
+            'blueprint_stage':2  # position of current Blueprint stage
         }
-                
+            
+            
     def _init_cbg_poi_data(self, directory, start_date, end_date, cbg_count_min, poi_count_min, acs_coverage_min):
         """
-        Load CBG and POI data. Filter CBGs and POIs based on different checks. 
+        Load CBG and POI data. Filter CBGs and POIs based on different checks, fill in or drop missing values.
         Run this if processed data is not provided.
         """
         data = load_cbg_poi_data(directory, use_key_demographics=self.use_key_demographics,
@@ -199,8 +202,7 @@ class CBGPOIDataset(Dataset):
         # Deal with NaNs in CBG attributes
         # 1. Only keep ACS fields with enough coverage (see acs_coverage_min)
         cbg_attrs_nan = self.cbg_attrs.isna().values
-        acs_field_coverage = np.sum(~cbg_attrs_nan, axis=0)
-        fields_to_keep = acs_field_coverage >= (self.num_cbgs() * acs_coverage_min)
+        fields_to_keep = np.mean(~cbg_attrs_nan, axis=0) >= acs_coverage_min
         # only want estimate fields, not margin of error
         kept_fields = [c for c, k in zip(self.cbg_attrs.columns, fields_to_keep) if k and 'e' in c]
         print('Keeping %d/%d ACS fields that are estimate, not margin of error, and cover at least %d%% of CBGs.' % 
@@ -244,7 +246,14 @@ class CBGPOIDataset(Dataset):
 
     def _init_county_data(self, path_to_data):
         """
-        Load county-level data based on (filtered) CBG and POI data.
+        Load county-level data for California counties based on (filtered) CBG and POI data. 
+        The pickle file should contain:
+        - fips (county FIPS codes)
+        - populations (county population sizes)
+        - tier_dates (dates for which we have tier information)
+        - blueprint_stages (CA Blueprint stage, relative to vaccination goals)
+        - tiers (county tiers, n_dates x n_counties)
+        - assignment_vars (our constructed Z variables, n_dates x n_counties)
         """
         with open(path_to_data, 'rb') as f:
             fips, population, tier_dates, blueprint_stages, tiers, assignment_vars = pickle.load(f)
@@ -257,7 +266,7 @@ class CBGPOIDataset(Dataset):
             # map tier date (usually a Tuesday) to the prior Monday
             prev_monday = dt + datetime.timedelta(days=-weekday)  
             ds = datetime.datetime.strftime(prev_monday, '%Y-%m-%d')
-            if ds in self.indices['weeks']:
+            if ds in self.indices['weeks']:  # check if we have SafeGraph CBG-POI visits for this Monday
                 dates_to_keep.append(True)
             else:
                 dates_to_keep.append(False)
@@ -267,8 +276,8 @@ class CBGPOIDataset(Dataset):
         self.county_tiers = tiers[dates_to_keep, :][:, counties_to_keep]
         self.county_assignment_vars = assignment_vars[dates_to_keep, :][:, counties_to_keep]
         
-        self.county2cbgs = {c:[] for c in self.indices['counties']}  # county to CBG indices
-        self.county2pois = {c:[] for c in self.indices['counties']}  # county to POI indices
+        self.county2cbgs = {c:[] for c in self.indices['counties']}  # county to list of CBG indices
+        self.county2pois = {c:[] for c in self.indices['counties']}  # county to list of POI indices
         for i, cbg in enumerate(self.indices['cbgs']):
             county = helper.extract_county_code_fr_fips(cbg)
             self.county2cbgs[county].append(i)
@@ -331,10 +340,10 @@ class CBGPOIDataset(Dataset):
         if self.has_county_data:
             cbg_attrs[:, self.FEATURE_DICT['cbg_tier']] = self.county_tiers[w_vec, cbg_counties]
             cbg_attrs[:, self.FEATURE_DICT['cbg_assignment_var']] = self.county_assignment_vars[w_vec, cbg_counties]
-            cbg_attrs[:, self.FEATURE_DICT['cbg_small_county']] = (self.county_populations[cbg_counties] < 106000).astype(int)
+            cbg_attrs[:, self.FEATURE_DICT['cbg_small_county']] = (self.county_populations[cbg_counties] < LARGE_COUNTY_CUTOFF).astype(int)
             poi_attrs[:, self.FEATURE_DICT['poi_tier']] = self.county_tiers[w_vec, poi_counties]
             poi_attrs[:, self.FEATURE_DICT['poi_assignment_var']] = self.county_assignment_vars[w_vec, poi_counties]
-            poi_attrs[:, self.FEATURE_DICT['poi_small_county']] = (self.county_populations[poi_counties] < 106000).astype(int)
+            poi_attrs[:, self.FEATURE_DICT['poi_small_county']] = (self.county_populations[poi_counties] < LARGE_COUNTY_CUTOFF).astype(int)
         
         edge_attrs = np.zeros((len(idxs), self.FEATURE_DICT['edge_num_attrs']))
         edge_attrs[:, self.FEATURE_DICT['cbg_poi_dist']] = self.get_cbg_poi_dists(c_vec, p_vec)
@@ -345,7 +354,7 @@ class CBGPOIDataset(Dataset):
     
     def get_batch_for_county_weights(self, idxs):
         """
-        Only retrieve the inputs needed for compute_county_county_weights
+        Only retrieve the inputs needed for compute_county_county_weights. Drop tier-related inputs.
         """
         assert all((idxs < self.__len__()) & (idxs >= 0))
         w_vec, c_vec, p_vec = self.index_to_wcp(idxs)
@@ -368,14 +377,6 @@ class CBGPOIDataset(Dataset):
         
         return wcp_indices, num_visits, t.tensor(cbg_attrs), t.tensor(poi_attrs), t.tensor(edge_attrs)
         
-    
-    def get_visits(self, idxs): 
-        """
-        Returns visits corresponding to the indices in idxs.
-        """
-        assert all((idxs < self.__len__()) & (idxs >= 0))
-        w_vec, c_vec, p_vec = self.index_to_wcp(idxs)
-        return np.array([self.visits[w][c,p] for w, c, p in zip(w_vec, c_vec, p_vec)])
         
     def num_weeks(self):
         """
@@ -544,36 +545,6 @@ class CBGPOIDataset(Dataset):
             poi_mat = self.poi_lat_lon.values[p_vec]
             return haversine_vector(cbg_mat, poi_mat, Unit.KILOMETERS)
         return self.distances[c_vec, p_vec]
-    
-    def get_normalized_adj_mat_for_week(self, week, train_idx=None, predict_binary=True):
-        """
-        Get normalized adjacency matrix for week, where A_norm[i,j] = A[i,j] / sqrt(deg_i)sqrt(deg_j).
-        If predict_binary, then A[i,j] and degrees are unweighted (i.e., A[i, j] is 0 or 1).
-        This is used in LightGCN model.
-        """
-        m = self.visits[week]
-        if predict_binary:  # keep only 1's instead of number of visits
-            m = csr_matrix((m > 0).astype(int))  
-        if train_idx is not None:  # only keep visits in train
-            _, c, p = self.index_to_wcp(train_idx)  
-            mask = csr_matrix((np.ones(len(c), dtype=int), (c, p)), shape=m.shape)
-            m = m.multiply(mask)  # elementwise multiplication
-
-        c, p = m.nonzero()
-        cbg_degrees = m @ np.ones(self.num_pois())
-        poi_degrees = m.transpose() @ np.ones(self.num_cbgs())
-        norm1 = np.sqrt(cbg_degrees[c])
-        norm2 = np.sqrt(poi_degrees[p])
-        visits = np.asarray(m[c, p]).reshape(-1)  # nonzero entries of m
-        normed_visits = t.tensor(visits / (norm1 * norm2))
-
-        row_idx = np.concatenate([c, p + self.num_cbgs()])
-        col_idx = np.concatenate([p + self.num_cbgs(), c])
-        indices = t.tensor([row_idx, col_idx])
-        data = t.cat([normed_visits, normed_visits])  # adj mat is symmetric, so repeat the normed visits
-        s = self.num_cbgs() + self.num_pois()
-        A_norm = t.sparse_coo_tensor(indices, data, size=[s,s], dtype=t.float32)
-        return A_norm
         
 
 def collate_individual_datapoints(data_list):
@@ -602,14 +573,16 @@ def collate_batch(batch):
     return batch[0]
 
 
-def load_cbg_poi_data(directory, use_key_demographics=False, load_distances=True):
+def load_cbg_poi_data(directory, use_key_demographics=True, load_distances=False):
     """
     Every data directory should have:
     - index.pkl (a dictionary with keys 'cbgs', 'pois', 'weeks')
     - visits.pkl (a list of sparse matrices, each of size n_cbgs x n_pois)
-    - distances.pkl (a numpy array of size n_cbgs x n_pois)
-    - cbg_attrs.csv (a pandas dataframe with n_cbgs rows and a column per CBG attribute)
     - poi_attrs.csv (a pandas dataframe with n_pois rows and a column per POI attribute)
+    Required if load_distances is True:
+    - distances.pkl (a numpy array of size n_cbgs x n_pois)
+    Required if use_key_demographics is False:
+    - cbg_attrs.csv (a pandas dataframe with n_cbgs rows and a column per CBG attribute)
     """
     with open(os.path.join(directory, 'index.pkl'), 'rb') as f:
         indices = pickle.load(f)
@@ -638,11 +611,3 @@ def load_cbg_poi_data(directory, use_key_demographics=False, load_distances=True
     cbg_device_counts = cbg_device_counts.loc[indices['cbgs']][indices['weeks']]
     
     return indices, visits, distances, cbg_attrs, poi_attrs, cbg_device_counts
-        
-    
-if __name__ == '__main__':
-    directory = os.path.join(cu.PATH_TO_CBG_POI_DATA, 'bay_area')
-    start_date = '2020-03-02'
-    end_date = '2020-03-30'
-    dset = CBGPOIDataset(directory=directory, start_date=start_date, end_date=end_date, only_use_tiers=False)
-    print(dset[4])

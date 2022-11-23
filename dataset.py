@@ -340,10 +340,10 @@ class CBGPOIDataset(Dataset):
         if self.has_county_data:
             cbg_attrs[:, self.FEATURE_DICT['cbg_tier']] = self.county_tiers[w_vec, cbg_counties]
             cbg_attrs[:, self.FEATURE_DICT['cbg_assignment_var']] = self.county_assignment_vars[w_vec, cbg_counties]
-            cbg_attrs[:, self.FEATURE_DICT['cbg_small_county']] = (self.county_populations[cbg_counties] < LARGE_COUNTY_CUTOFF).astype(int)
+            cbg_attrs[:, self.FEATURE_DICT['cbg_small_county']] = (self.county_populations[cbg_counties] < cu.LARGE_COUNTY_CUTOFF).astype(int)
             poi_attrs[:, self.FEATURE_DICT['poi_tier']] = self.county_tiers[w_vec, poi_counties]
             poi_attrs[:, self.FEATURE_DICT['poi_assignment_var']] = self.county_assignment_vars[w_vec, poi_counties]
-            poi_attrs[:, self.FEATURE_DICT['poi_small_county']] = (self.county_populations[poi_counties] < LARGE_COUNTY_CUTOFF).astype(int)
+            poi_attrs[:, self.FEATURE_DICT['poi_small_county']] = (self.county_populations[poi_counties] < cu.LARGE_COUNTY_CUTOFF).astype(int)
         
         edge_attrs = np.zeros((len(idxs), self.FEATURE_DICT['edge_num_attrs']))
         edge_attrs[:, self.FEATURE_DICT['cbg_poi_dist']] = self.get_cbg_poi_dists(c_vec, p_vec)

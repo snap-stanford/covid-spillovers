@@ -246,7 +246,7 @@ def run_experiment_across_negative_samples(cfg, args):
     print('Running experiment across negative samples (use_sampled_nnz = %s)' % cfg.data.use_sampled_nnz)
     base_config_name = (args.config).split('.')[0]
     base_experiment_name = cfg.experiment_name
-    assert cfg.train.num_workers <= 4  # can't have too many workers if we are running in parallel
+    assert (args.num_versions * cfg.train.num_workers) <= 100  # can't have too many workers if we are running in parallel
     for v in range(args.first_version, args.first_version+args.num_versions):
         # create config
         new_config_name = '%s_v%d.yml' % (base_config_name, v)
@@ -422,7 +422,7 @@ def run_epoch(dset, train_idx, mdl, opt, cfg, device, test_idx=None, update_para
     else:
         results = {'train_loss':float(train_loss), 'train_loss_per_batch': train_batch_loss, 
                    'test_loss':np.nan, 'test_loss_per_batch': []}
-    print('Total train loss = %.3f, reg loss = %.3f, test loss = %.3f [time=%.3f]' % 
+    print('Total train loss = %.3f, test loss = %.3f [time=%.3f]' % 
           (results['train_loss'], results['test_loss'], time.time() - ep_start))
     return results
     
@@ -457,7 +457,8 @@ def calculate_losses_over_data(dset, idx, mdl, cfg, device, apply_corrections=Fa
         if apply_corrections:
             if dl.dataset.has_individual_corrections:  # we have correction terms per data point
                 batch_idx = sampler[b]
-                correction_terms = t.tensor([dl.dataset.correction_terms[i] if i in dl.dataset.correction_terms else 1 for i in batch_idx]).to(device)
+                # only sampled zero data points are in correction terms; nnz data points are always included so correction is 1
+                correction_terms = t.tensor([dl.dataset.correction_terms[i] if i in dl.dataset.correction_terms else 1 for i in batch_idx]).to(device)  
             else:
                 correction_terms = dl.dataset.correction_terms  # 2-tuple of neg_term, pos_term
         else:
@@ -493,6 +494,7 @@ def update_params_and_save_state_dicts(mdl, opt, loss, cfg, device, print_delta=
         print('Change in model parameters = %.6f' % delta)
     t.save(mdl.state_dict(), save_model_path) 
     t.save(opt.state_dict(), save_opt_path)
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -7,7 +7,7 @@ Code for "Estimating geographic spillover effects of COVID-19 policies from larg
 
 **sampling.py**: code to sample from data and analyze sampled data
 
-**model_experiments.py**: code to fit zero-inflated Poisson regression model on sampled data
+**poisson_reg_model.py**: code to fit zero-inflated Poisson regression model on sampled data
 
 **results.py**: code to analyze model results 
 

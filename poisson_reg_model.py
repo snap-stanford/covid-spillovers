@@ -495,6 +495,34 @@ def update_params_and_save_state_dicts(mdl, opt, loss, cfg, device, print_delta=
     t.save(mdl.state_dict(), save_model_path) 
     t.save(opt.state_dict(), save_opt_path)
     
+    
+def recreate_mdl_and_dset_from_experiment(experiment, device, dset=None, set_final_mdl_weights=True):
+    """
+    Recreate model and dataset using saved experiment kwargs.
+    """
+    # get cfg and args
+    save_path = os.path.join(cu.PATH_TO_CBG_POI_DATA, 'outputs', '%s_cfg_args.pkl' % experiment)
+    with open(save_path, 'rb') as f:
+        cfg, args = pickle.load(f)
+    
+    # get dset and kwargs
+    directory = os.path.join(cu.PATH_TO_CBG_POI_DATA, cfg.data.name, 'sampled_data', cfg.data.train_test_dir)
+    with open(os.path.join(directory, 'kwargs.pkl'), 'rb') as f:
+        dset_kwargs, sampling_kwargs = pickle.load(f)
+    if dset is None:
+        dset = CBGPOIDataset(**dset_kwargs)
+    
+    # get model
+    mdl = PoissonRegModel(dset.FEATURE_DICT, control_tier=sampling_kwargs['control_tier'],
+                          treatment_tier=sampling_kwargs['treatment_tier'],
+                          zero_inflated=cfg.model.zero_inflated,
+                          use_poi_cat_groups=cfg.data.use_poi_cat_groups)
+    mdl = mdl.to(device)
+    if set_final_mdl_weights:
+        model_fn = os.path.join(cu.PATH_TO_CBG_POI_DATA, 'model_weights', experiment)
+        mdl.load_state_dict(t.load(model_fn, map_location=device))
+    return mdl, dset
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

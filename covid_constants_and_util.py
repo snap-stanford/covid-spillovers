@@ -503,6 +503,11 @@ CATEGORY_GROUPS = {'Restaurants': ['Full-Service Restaurants',
                              "Children's and Infants' Clothing Stores",
                              'Luggage and Leather Goods Stores']}
 
+TIER2COLOR = {1:'purple',
+              2:'red',
+              3:'orange',
+              4:'yellow'}
+
 def get_datetime_hour_as_string(datetime_hour):
     return '%i.%i.%i.%i' % (datetime_hour.year, datetime_hour.month,
                             datetime_hour.day, datetime_hour.hour)
@@ -614,6 +619,15 @@ def reformat_decimal_as_percent(tick_val, pos):
     percent = round(tick_val * 100, 1)
     new_tick_format = '%d%%' % percent
     return new_tick_format
+
+def set_xaxis_labels_as_percentages(ax):
+    xlim = ax.get_xlim()
+    xticks = np.linspace(xlim[0], xlim[1], 4)
+    ax.set_xticks(xticks)
+    percent_change = np.round(xticks * 100)  # label as percentage instead of proportion
+    ax.set_xticklabels(['%d%%' % d if d <= 0 else '+%d%%' % d for d in percent_change], fontsize=14)
+    ymin, ymax = ax.get_ylim()
+    ax.vlines([0], ymin, ymax, color='grey')
 
 def extract_county_code_fr_fips(cbg_fips):
     """

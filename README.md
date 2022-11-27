@@ -1,16 +1,18 @@
 # covid-spillovers
-Code for "Estimating geographic spillover effects of COVID-19 policies from large-scale mobility networks" (2022) by Serina Chang, Damir Vrabac, Jure Leskovec, and Johan Ugander.
+Code to generate results in "Estimating geographic spillover effects of COVID-19 policies from large-scale mobility networks" (AAAI 2023) by Serina Chang, Damir Vrabac, Jure Leskovec, and Johan Ugander.
 
 ## Files
 
+**covid_constants_and_util.py**: constants (eg, file paths) and utility functions 
+
 **dataset.py**: contains DataLoader object to load CBG-POI networks and covariates
 
-**sampling.py**: code to sample from data and analyze sampled data
+**helper_methods_for_aggregate_data_analysis.py**: helper functions for loading and preprocessing data
+
+**make_figures.ipynb**: make figures and check stats reported in paper
 
 **poisson_reg_model.py**: code to fit zero-inflated Poisson regression model on sampled data
 
-**results.py**: code to analyze model results 
+**results.py**: code to analyze model results and spillover costs across county partitions
 
-**covid_constants_and_util.py**: constants (eg, file paths) and utility functions 
-
-**helper_methods_for_aggregate_data_analysis.py**: helper functions for loading and preprocessing data
+**sampling.py**: code to sample from data and analyze sampled data

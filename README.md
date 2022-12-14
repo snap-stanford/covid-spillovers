@@ -5,6 +5,8 @@ Code to generate results in "Estimating geographic spillover effects of COVID-19
 
 **covid_constants_and_util.py**: constants (eg, file paths) and utility functions 
 
+**data_prep.ipynb**: notebook to process mobility data and county-level tier data into the format used in dataset.py
+
 **dataset.py**: contains DataLoader object to load CBG-POI networks and covariates
 
 **helper_methods_for_aggregate_data_analysis.py**: helper functions for loading and preprocessing data

@@ -1,4 +1,5 @@
 import argparse
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import math
@@ -651,6 +652,25 @@ def compute_metis_partition_per_k(dset, device, G, ks, a=0.05):
         upper_for_k.append(mean_of_means + (zscore * se))
     return mean_for_k, lower_for_k, upper_for_k
     
+def visualize_partition(county2macrocounty, plot_kwargs=None):
+    if plot_kwargs is None:
+        plot_kwargs = {}
+    geoData = gpd.read_file('https://raw.githubusercontent.com/holtzy/The-Python-Graph-Gallery/master/static/data/US-counties.geojson')
+    ca_geom = geoData[geoData['STATE'] == '06'].sort_values(by='id')
+    macrocounties = [county2macrocounty[f] for f in sorted(county2macrocounty.keys())]
+    ca_geom['macrocounty'] = macrocounties  # ca_geom has counties in FIPS order too
+    ca_geom['coords'] = ca_geom['geometry'].apply(lambda x: x.representative_point().coords[:])
+    ca_geom['coords'] = [coords[0] for coords in ca_geom['coords']]
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ca_geom.plot('macrocounty', ax=ax, alpha=0.8, **plot_kwargs)
+    for macrocounty, subdf in ca_geom.groupby('macrocounty'):
+        polygon = subdf.geometry.unary_union
+        # plot boundaries of counties within each macrocounty
+        gpd.GeoDataFrame(geometry=[polygon], crs=subdf.crs).boundary.plot(color='white', ax=ax)
+    ax.set_axis_off()  # remove axes
+    return ax
+
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
